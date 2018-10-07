@@ -1,0 +1,186 @@
+import org.apache.spark.sql._
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types._
+
+val spark = SparkSession.builder.appName("Aggregations").getOrCreate()
+import org.apache.spark.sql._
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types._
+spark: org.apache.spark.sql.SparkSession = org.apache.spark.sql.SparkSession@50afb798
+//creating dataframe
+val df = spark.read.format("csv")
+.option("inferSchema", "true")
+.option("header", "true")
+.load("/FileStore/tables/online_retail_dataset-92e8e.csv")
+.coalesce(5)
+.cache()
+df.show(5)
++---------+---------+--------------------+--------+--------------+---------+----------+--------------+
+|InvoiceNo|StockCode|         Description|Quantity|   InvoiceDate|UnitPrice|CustomerID|       Country|
++---------+---------+--------------------+--------+--------------+---------+----------+--------------+
+|   536365|   85123A|WHITE HANGING HEA...|       6|12/1/2010 8:26|     2.55|     17850|United Kingdom|
+|   536365|    71053| WHITE METAL LANTERN|       6|12/1/2010 8:26|     3.39|     17850|United Kingdom|
+|   536365|   84406B|CREAM CUPID HEART...|       8|12/1/2010 8:26|     2.75|     17850|United Kingdom|
+|   536365|   84029G|KNITTED UNION FLA...|       6|12/1/2010 8:26|     3.39|     17850|United Kingdom|
+|   536365|   84029E|RED WOOLLY HOTTIE...|       6|12/1/2010 8:26|     3.39|     17850|United Kingdom|
++---------+---------+--------------------+--------+--------------+---------+----------+--------------+
+only showing top 5 rows
+
+df: org.apache.spark.sql.Dataset[org.apache.spark.sql.Row] = [InvoiceNo: string, StockCode: string ... 6 more fields]
+df.printSchema()
+root
+ |-- InvoiceNo: string (nullable = true)
+ |-- StockCode: string (nullable = true)
+ |-- Description: string (nullable = true)
+ |-- Quantity: integer (nullable = true)
+ |-- InvoiceDate: string (nullable = true)
+ |-- UnitPrice: double (nullable = true)
+ |-- CustomerID: integer (nullable = true)
+ |-- Country: string (nullable = true)
+
+df.count()
+res8: Long = 541909
+//use select to see the result column
+df.select(count("StockCode")).show()
++----------------+
+|count(StockCode)|
++----------------+
+|          541909|
++----------------+
+
+//gives distinct count in a dataframe
+df.select(countDistinct("StockCode")).show()
++-------------------------+
+|count(DISTINCT StockCode)|
++-------------------------+
+|                     4070|
++-------------------------+
+
+//gives an approximate distinct count in a dataframe
+df.select(approx_count_distinct("StockCode", 0.1)).show()
++--------------------------------+
+|approx_count_distinct(StockCode)|
++--------------------------------+
+|                            3364|
++--------------------------------+
+
+//first and last from a dataframe
+df.select(first("InvoiceNo"), first("StockCode"), last("InvoiceDate")).show()
++-----------------------+-----------------------+------------------------+
+|first(InvoiceNo, false)|first(StockCode, false)|last(InvoiceDate, false)|
++-----------------------+-----------------------+------------------------+
+|                 536365|                 85123A|         12/9/2011 12:50|
++-----------------------+-----------------------+------------------------+
+
+//for getting max and min values from a dataframe
+df.select(max("Quantity"), min("UnitPrice")).show
++-------------+--------------+
+|max(Quantity)|min(UnitPrice)|
++-------------+--------------+
+|        80995|     -11062.06|
++-------------+--------------+
+
+//sum 
+df.select(sum("UnitPrice")).show()
++----------------+
+|  sum(UnitPrice)|
++----------------+
+|2498803.97400038|
++----------------+
+
+//sumDistinct
+df.select(sumDistinct("Quantity")).show()
++----------------------+
+|sum(DISTINCT Quantity)|
++----------------------+
+|                 29310|
++----------------------+
+
+//avg
+df.select(
+count("Quantity").alias("total_transactions"),
+sum("Quantity").alias("total_purchases"),
+avg("Quantity").alias("avg_purchases"),
+expr("mean(Quantity)").alias("mean_purchases"))
+.selectExpr(
+"total_purchases/total_transactions",
+"avg_purchases",
+"mean_purchases").show()
++--------------------------------------+----------------+----------------+
+|(total_purchases / total_transactions)|   avg_purchases|  mean_purchases|
++--------------------------------------+----------------+----------------+
+|                      9.55224954743324|9.55224954743324|9.55224954743324|
++--------------------------------------+----------------+----------------+
+
+//groupBy
+df.groupBy("InvoiceNo", "CustomerId").count().show(5)
++---------+----------+-----+
+|InvoiceNo|CustomerId|count|
++---------+----------+-----+
+|   536846|     14573|   76|
+|   537026|     12395|   12|
+|   537883|     14437|    5|
+|   538068|     17978|   12|
+|   538279|     14952|    7|
++---------+----------+-----+
+only showing top 5 rows
+
+//grouping with expression
+df.groupBy("InvoiceNo").agg(count("Quantity").alias("quan"),expr("count(Quantity)")).show(5)
++---------+----+---------------+
+|InvoiceNo|quan|count(Quantity)|
++---------+----+---------------+
+|   536596|   6|              6|
+|   536938|  14|             14|
+|   537252|   1|              1|
+|   537691|  20|             20|
+|   538041|   1|              1|
++---------+----+---------------+
+only showing top 5 rows
+
+//window function
+val dfWithDate = df.withColumn("date", to_date(col("InvoiceDate"), "MM/d/yyyy H:mm"))
+dfWithDate.createOrReplaceTempView("dfWithDate")
+dfWithDate: org.apache.spark.sql.DataFrame = [InvoiceNo: string, StockCode: string ... 7 more fields]
+import org.apache.spark.sql.expressions._
+
+val windowSpec = Window
+.partitionBy("CustomerId", "date")
+.orderBy(col("Quantity").desc)
+.rowsBetween(Window.unboundedPreceding, Window.currentRow)
+import org.apache.spark.sql.expressions._
+windowSpec: org.apache.spark.sql.expressions.WindowSpec = org.apache.spark.sql.expressions.WindowSpec@58d4d669
+val maxPurchaseQuantity = max(col("Quantity")).over(windowSpec)
+maxPurchaseQuantity: org.apache.spark.sql.Column = max(Quantity) OVER (PARTITION BY CustomerId, date ORDER BY Quantity DESC NULLS LAST ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+val purchaseDenseRank = dense_rank().over(windowSpec)
+val purchaseRank = rank().over(windowSpec)
+purchaseDenseRank: org.apache.spark.sql.Column = DENSE_RANK() OVER (PARTITION BY CustomerId, date ORDER BY Quantity DESC NULLS LAST ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+purchaseRank: org.apache.spark.sql.Column = RANK() OVER (PARTITION BY CustomerId, date ORDER BY Quantity DESC NULLS LAST ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+dfWithDate.where("CustomerId IS NOT NULL").orderBy("CustomerId")
+.select(
+col("CustomerId"),
+col("date"),
+col("Quantity"),
+purchaseRank.alias("quantityRank"),
+purchaseDenseRank.alias("quantityDenseRank"),
+maxPurchaseQuantity.alias("maxPurchaseQuantity")).show(10)
++----------+----------+--------+------------+-----------------+-------------------+
+|CustomerId|      date|Quantity|quantityRank|quantityDenseRank|maxPurchaseQuantity|
++----------+----------+--------+------------+-----------------+-------------------+
+|     12346|2011-01-18|   74215|           1|                1|              74215|
+|     12346|2011-01-18|  -74215|           2|                2|              74215|
+|     12347|2010-12-07|      36|           1|                1|                 36|
+|     12347|2010-12-07|      30|           2|                2|                 36|
+|     12347|2010-12-07|      24|           3|                3|                 36|
+|     12347|2010-12-07|      12|           4|                4|                 36|
+|     12347|2010-12-07|      12|           4|                4|                 36|
+|     12347|2010-12-07|      12|           4|                4|                 36|
+|     12347|2010-12-07|      12|           4|                4|                 36|
+|     12347|2010-12-07|      12|           4|                4|                 36|
++----------+----------+--------+------------+-----------------+-------------------+
+only showing top 10 rows
+
+//grouping sets
+val dfNoNull = dfWithDate.drop()
+dfNoNull.createOrReplaceTempView("dfNoNull")
+dfNoNull: org.apache.spark.sql.DataFrame = [InvoiceNo: string, StockCode: string ... 7 more fields]
