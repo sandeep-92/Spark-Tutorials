@@ -1,0 +1,121 @@
+//Different Joins in Spark with Dataframes
+
+import org.apache.spark.sql._
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types._
+
+val spark = SparkSession.builder.appName("Aadhar").getOrCreate
+import org.apache.spark.sql._
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types._
+spark: org.apache.spark.sql.SparkSession = org.apache.spark.sql.SparkSession@54c14c97
+val person = Seq(
+(0, "Sandeep", 0, Seq(10)),
+(1, "Mandeep", 1, Seq(10, 50, 100)),
+(2, "Karandeep", 1, Seq(10, 100)))
+.toDF("id", "name", "graduation", "position")
+person: org.apache.spark.sql.DataFrame = [id: int, name: string ... 2 more fields]
+val education = Seq(
+(0, "Graduate", "IIT", "Mumbai"),
+(2, "Master", "NIT", "UK"),
+  (1, "Master", "DTU", "Delhi"))
+.toDF("id", "degree", "college", "place")
+education: org.apache.spark.sql.DataFrame = [id: int, degree: string ... 2 more fields]
+val position = Seq(
+(10, "Developer"),
+(50, "Lead"),
+(100, "Manager"))
+.toDF("id", "designation")
+position: org.apache.spark.sql.DataFrame = [id: int, designation: string]
+person.createOrReplaceTempView("person")
+education.createOrReplaceTempView("education")
+position.createOrReplaceTempView("position")
+
+val joinExpr = person.col("graduation") === education.col("id")
+val joinType = "inner"
+joinExpr: org.apache.spark.sql.Column = (graduation = id)
+joinType: String = inner
+//inner join is default join spark, returns only matching values from both table
+val joinInner = person.join(education, joinExpr, joinType).show()
++---+---------+----------+-------------+---+--------+-------+------+
+| id|     name|graduation|     position| id|  degree|college| place|
++---+---------+----------+-------------+---+--------+-------+------+
+|  0|  Sandeep|         0|         [10]|  0|Graduate|    IIT|Mumbai|
+|  2|Karandeep|         1|    [10, 100]|  1|  Master|    DTU| Delhi|
+|  1|  Mandeep|         1|[10, 50, 100]|  1|  Master|    DTU| Delhi|
++---+---------+----------+-------------+---+--------+-------+------+
+
+joinInner: Unit = ()
+//left-outer join
+val joinType2 = "leftouter"
+val joinLeftOuter = person.join(education, joinExpr, joinType2).show()
++---+---------+----------+-------------+---+--------+-------+------+
+| id|     name|graduation|     position| id|  degree|college| place|
++---+---------+----------+-------------+---+--------+-------+------+
+|  0|  Sandeep|         0|         [10]|  0|Graduate|    IIT|Mumbai|
+|  1|  Mandeep|         1|[10, 50, 100]|  1|  Master|    DTU| Delhi|
+|  2|Karandeep|         1|    [10, 100]|  1|  Master|    DTU| Delhi|
++---+---------+----------+-------------+---+--------+-------+------+
+
+joinType2: String = leftouter
+joinOuter: Unit = ()
+//right-outer join
+val joinType3 = "rightouter"
+val joinRightOuter = person.join(education, joinExpr, joinType3).show()
++----+---------+----------+-------------+---+--------+-------+------+
+|  id|     name|graduation|     position| id|  degree|college| place|
++----+---------+----------+-------------+---+--------+-------+------+
+|   0|  Sandeep|         0|         [10]|  0|Graduate|    IIT|Mumbai|
+|null|     null|      null|         null|  2|  Master|    NIT|    UK|
+|   2|Karandeep|         1|    [10, 100]|  1|  Master|    DTU| Delhi|
+|   1|  Mandeep|         1|[10, 50, 100]|  1|  Master|    DTU| Delhi|
++----+---------+----------+-------------+---+--------+-------+------+
+
+joinType3: String = rightouter
+joinRightOuter: Unit = ()
+//cross-join
+val joinType4 = "cross"
+val joinCross = education.join(person, joinExpr, joinType4).show()
++---+--------+-------+------+---+---------+----------+-------------+
+| id|  degree|college| place| id|     name|graduation|     position|
++---+--------+-------+------+---+---------+----------+-------------+
+|  0|Graduate|    IIT|Mumbai|  0|  Sandeep|         0|         [10]|
+|  1|  Master|    DTU| Delhi|  2|Karandeep|         1|    [10, 100]|
+|  1|  Master|    DTU| Delhi|  1|  Mandeep|         1|[10, 50, 100]|
++---+--------+-------+------+---+---------+----------+-------------+
+
+joinType4: String = cross
+joinCross: Unit = ()
+//or
+person.crossJoin(education).show()
++---+---------+----------+-------------+---+--------+-------+------+
+| id|     name|graduation|     position| id|  degree|college| place|
++---+---------+----------+-------------+---+--------+-------+------+
+|  0|  Sandeep|         0|         [10]|  0|Graduate|    IIT|Mumbai|
+|  1|  Mandeep|         1|[10, 50, 100]|  0|Graduate|    IIT|Mumbai|
+|  2|Karandeep|         1|    [10, 100]|  0|Graduate|    IIT|Mumbai|
+|  0|  Sandeep|         0|         [10]|  2|  Master|    NIT|    UK|
+|  1|  Mandeep|         1|[10, 50, 100]|  2|  Master|    NIT|    UK|
+|  2|Karandeep|         1|    [10, 100]|  2|  Master|    NIT|    UK|
+|  0|  Sandeep|         0|         [10]|  1|  Master|    DTU| Delhi|
+|  1|  Mandeep|         1|[10, 50, 100]|  1|  Master|    DTU| Delhi|
+|  2|Karandeep|         1|    [10, 100]|  1|  Master|    DTU| Delhi|
++---+---------+----------+-------------+---+--------+-------+------+
+
+//big table-to-small table join using broadcast variable
+val joinBroad = person.join(broadcast(education), joinExpr)
+joinBroad.explain
+== Physical Plan ==
+*(1) BroadcastHashJoin [graduation#87], [id#59], Inner, BuildRight, false
+:- LocalTableScan [id#85, name#86, graduation#87, position#88]
++- BroadcastExchange HashedRelationBroadcastMode(List(cast(input[0, int, false] as bigint)))
+   +- LocalTableScan [id#59, degree#60, college#61, place#62]
+joinBroad: org.apache.spark.sql.DataFrame = [id: int, name: string ... 6 more fields]
+joinBroad.show()
++---+---------+----------+-------------+---+--------+-------+------+
+| id|     name|graduation|     position| id|  degree|college| place|
++---+---------+----------+-------------+---+--------+-------+------+
+|  0|  Sandeep|         0|         [10]|  0|Graduate|    IIT|Mumbai|
+|  1|  Mandeep|         1|[10, 50, 100]|  1|  Master|    DTU| Delhi|
+|  2|Karandeep|         1|    [10, 100]|  1|  Master|    DTU| Delhi|
++---+---------+----------+-------------+---+--------+-------+------+
